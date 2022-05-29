@@ -311,8 +311,8 @@ holding(struct spinlock *lk)
     800002b0:	00008067          	ret
 
 00000000800002b4 <push_off>:
-// it takes two pop_off()s to undo two push_off()s.  Also, if interrupts
 // are initially off, then push_off, pop_off leaves them off.
+// 关闭中断和打开中断的操作必须配对
 
 void
 push_off(void)
