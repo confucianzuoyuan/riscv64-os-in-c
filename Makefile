@@ -4,7 +4,8 @@ U=user
 OBJS = \
   $K/entry.o \
   $K/start.o \
-  $K/main.o
+  $K/main.o \
+  $K/kernelvec.o
 
 QEMU = qemu-system-riscv64
 
