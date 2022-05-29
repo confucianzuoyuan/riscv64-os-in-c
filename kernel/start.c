@@ -1,10 +1,10 @@
 #include <stdint.h>
 
 #include "types.h"
+#include "param.h"
 #include "memlayout.h"
 #include "riscv.h"
-
-#define NCPU          8  // maximum number of CPUs
+#include "defs.h"
 
 void main();
 void timerinit();

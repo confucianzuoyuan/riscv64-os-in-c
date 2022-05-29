@@ -6,7 +6,7 @@ Disassembly of section .text:
 
 0000000080000000 <_entry>:
     80000000:	00000117          	auipc	sp,0x0
-    80000004:	3a010113          	addi	sp,sp,928 # 800003a0 <stack0>
+    80000004:	60010113          	addi	sp,sp,1536 # 80000600 <stack0>
     80000008:	00001537          	lui	a0,0x1
     8000000c:	f14025f3          	csrr	a1,mhartid
     80000010:	00158593          	addi	a1,a1,1
@@ -35,10 +35,13 @@ r_mhartid()
   asm volatile("csrr %0, mhartid" : "=r" (x) );
     80000030:	f14027f3          	csrr	a5,mhartid
   // each CPU has a separate source of timer interrupts.
+  // 每个cpu都有自己的定时器中断源
   int id = r_mhartid();
     80000034:	0007869b          	sext.w	a3,a5
 
   // ask the CLINT for a timer interrupt.
+  // 请求一个定时器中断
+  // 间隔是1000000个时钟周期，在qemu中大约0.1秒。
   int interval = 1000000; // cycles; about 1/10th second in qemu.
   *(uint64*)CLINT_MTIMECMP(id) = *(uint64*)CLINT_MTIME + interval;
     80000038:	0037979b          	slliw	a5,a5,0x3
@@ -60,7 +63,7 @@ r_mhartid()
     80000060:	00d70733          	add	a4,a4,a3
     80000064:	00371693          	slli	a3,a4,0x3
     80000068:	00000717          	auipc	a4,0x0
-    8000006c:	1f870713          	addi	a4,a4,504 # 80000260 <timer_scratch>
+    8000006c:	45870713          	addi	a4,a4,1112 # 800004c0 <timer_scratch>
     80000070:	00d70733          	add	a4,a4,a3
   scratch[3] = CLINT_MTIMECMP(id);
     80000074:	00f73c23          	sd	a5,24(a4)
@@ -79,11 +82,11 @@ w_mscratch(uint64 x)
     80000088:	30579073          	csrw	mtvec,a5
   asm volatile("csrr %0, mstatus" : "=r" (x) );
     8000008c:	300027f3          	csrr	a5,mstatus
-
-  // set the machine-mode trap handler.
+  // 设置机器模式陷入处理器
   w_mtvec((uint64)timervec);
 
   // enable machine-mode interrupts.
+  // 启用机器模式中断
   w_mstatus(r_mstatus() | MSTATUS_MIE);
     80000090:	0087e793          	ori	a5,a5,8
   asm volatile("csrw mstatus, %0" : : "r" (x));
@@ -92,6 +95,7 @@ w_mscratch(uint64 x)
     80000098:	304027f3          	csrr	a5,mie
 
   // enable machine-mode timer interrupts.
+  // 启用机器模式定时器中断
   w_mie(r_mie() | MIE_MTIE);
     8000009c:	0807e793          	ori	a5,a5,128
   asm volatile("csrw mie, %0" : : "r" (x));
@@ -110,7 +114,7 @@ w_mscratch(uint64 x)
     800000c0:	300027f3          	csrr	a5,mstatus
   x &= ~MSTATUS_MPP_MASK;
     800000c4:	ffffe737          	lui	a4,0xffffe
-    800000c8:	7ff70713          	addi	a4,a4,2047 # ffffffffffffe7ff <stack0+0xffffffff7fffe45f>
+    800000c8:	7ff70713          	addi	a4,a4,2047 # ffffffffffffe7ff <cpus+0xffffffff7fff61ff>
     800000cc:	00e7f7b3          	and	a5,a5,a4
   x |= MSTATUS_MPP_S;
     800000d0:	00001737          	lui	a4,0x1
@@ -224,7 +228,7 @@ main()
     800001d0:	01010413          	addi	s0,sp,16
   lib_puts("你好，世界！");
     800001d4:	00000517          	auipc	a0,0x0
-    800001d8:	07450513          	addi	a0,a0,116 # 80000248 <timervec+0x48>
+    800001d8:	2cc50513          	addi	a0,a0,716 # 800004a0 <mycpu+0x30>
     800001dc:	00000097          	auipc	ra,0x0
     800001e0:	fa0080e7          	jalr	-96(ra) # 8000017c <lib_puts>
     800001e4:	00813083          	ld	ra,8(sp)
@@ -252,3 +256,264 @@ main()
     8000023c:	30200073          	mret
     80000240:	0000                	unimp
 	...
+
+0000000080000244 <initlock>:
+#include "proc.h"
+#include "defs.h"
+
+void
+initlock(struct spinlock *lk, char *name)
+{
+    80000244:	ff010113          	addi	sp,sp,-16
+    80000248:	00813423          	sd	s0,8(sp)
+    8000024c:	01010413          	addi	s0,sp,16
+  lk->name = name;
+    80000250:	00b53423          	sd	a1,8(a0)
+  lk->locked = 0;
+    80000254:	00052023          	sw	zero,0(a0)
+  lk->cpu = 0;
+    80000258:	00053823          	sd	zero,16(a0)
+}
+    8000025c:	00813403          	ld	s0,8(sp)
+    80000260:	01010113          	addi	sp,sp,16
+    80000264:	00008067          	ret
+
+0000000080000268 <holding>:
+// 中断必须处于关闭状态
+int
+holding(struct spinlock *lk)
+{
+  int r;
+  r = (lk->locked && lk->cpu == mycpu());
+    80000268:	00052783          	lw	a5,0(a0)
+    8000026c:	00079663          	bnez	a5,80000278 <holding+0x10>
+    80000270:	00000513          	li	a0,0
+  return r;
+}
+    80000274:	00008067          	ret
+{
+    80000278:	fe010113          	addi	sp,sp,-32
+    8000027c:	00113c23          	sd	ra,24(sp)
+    80000280:	00813823          	sd	s0,16(sp)
+    80000284:	00913423          	sd	s1,8(sp)
+    80000288:	02010413          	addi	s0,sp,32
+  r = (lk->locked && lk->cpu == mycpu());
+    8000028c:	01053483          	ld	s1,16(a0)
+    80000290:	00000097          	auipc	ra,0x0
+    80000294:	1e0080e7          	jalr	480(ra) # 80000470 <mycpu>
+    80000298:	40a48533          	sub	a0,s1,a0
+    8000029c:	00153513          	seqz	a0,a0
+}
+    800002a0:	01813083          	ld	ra,24(sp)
+    800002a4:	01013403          	ld	s0,16(sp)
+    800002a8:	00813483          	ld	s1,8(sp)
+    800002ac:	02010113          	addi	sp,sp,32
+    800002b0:	00008067          	ret
+
+00000000800002b4 <push_off>:
+// it takes two pop_off()s to undo two push_off()s.  Also, if interrupts
+// are initially off, then push_off, pop_off leaves them off.
+
+void
+push_off(void)
+{
+    800002b4:	fe010113          	addi	sp,sp,-32
+    800002b8:	00113c23          	sd	ra,24(sp)
+    800002bc:	00813823          	sd	s0,16(sp)
+    800002c0:	00913423          	sd	s1,8(sp)
+    800002c4:	02010413          	addi	s0,sp,32
+  asm volatile("csrr %0, sstatus" : "=r" (x) );
+    800002c8:	100024f3          	csrr	s1,sstatus
+    800002cc:	100027f3          	csrr	a5,sstatus
+  w_sstatus(r_sstatus() & ~SSTATUS_SIE);
+    800002d0:	ffd7f793          	andi	a5,a5,-3
+  asm volatile("csrw sstatus, %0" : : "r" (x));
+    800002d4:	10079073          	csrw	sstatus,a5
+  int old = intr_get();
+
+  intr_off();
+  if(mycpu()->noff == 0)
+    800002d8:	00000097          	auipc	ra,0x0
+    800002dc:	198080e7          	jalr	408(ra) # 80000470 <mycpu>
+    800002e0:	00052783          	lw	a5,0(a0)
+    800002e4:	02078663          	beqz	a5,80000310 <push_off+0x5c>
+    mycpu()->intena = old;
+  mycpu()->noff += 1;
+    800002e8:	00000097          	auipc	ra,0x0
+    800002ec:	188080e7          	jalr	392(ra) # 80000470 <mycpu>
+    800002f0:	00052783          	lw	a5,0(a0)
+    800002f4:	0017879b          	addiw	a5,a5,1
+    800002f8:	00f52023          	sw	a5,0(a0)
+}
+    800002fc:	01813083          	ld	ra,24(sp)
+    80000300:	01013403          	ld	s0,16(sp)
+    80000304:	00813483          	ld	s1,8(sp)
+    80000308:	02010113          	addi	sp,sp,32
+    8000030c:	00008067          	ret
+    mycpu()->intena = old;
+    80000310:	00000097          	auipc	ra,0x0
+    80000314:	160080e7          	jalr	352(ra) # 80000470 <mycpu>
+  return (x & SSTATUS_SIE) != 0;
+    80000318:	0014d493          	srli	s1,s1,0x1
+    8000031c:	0014f493          	andi	s1,s1,1
+    80000320:	00952223          	sw	s1,4(a0)
+    80000324:	fc5ff06f          	j	800002e8 <push_off+0x34>
+
+0000000080000328 <acquire>:
+{
+    80000328:	fe010113          	addi	sp,sp,-32
+    8000032c:	00113c23          	sd	ra,24(sp)
+    80000330:	00813823          	sd	s0,16(sp)
+    80000334:	00913423          	sd	s1,8(sp)
+    80000338:	02010413          	addi	s0,sp,32
+    8000033c:	00050493          	mv	s1,a0
+  push_off(); // disable interrupts to avoid deadlock.
+    80000340:	00000097          	auipc	ra,0x0
+    80000344:	f74080e7          	jalr	-140(ra) # 800002b4 <push_off>
+  if(holding(lk))
+    80000348:	00048513          	mv	a0,s1
+    8000034c:	00000097          	auipc	ra,0x0
+    80000350:	f1c080e7          	jalr	-228(ra) # 80000268 <holding>
+  while(__sync_lock_test_and_set(&lk->locked, 1) != 0)
+    80000354:	00100713          	li	a4,1
+  if(holding(lk))
+    80000358:	00050463          	beqz	a0,80000360 <acquire+0x38>
+    for(;;);
+    8000035c:	0000006f          	j	8000035c <acquire+0x34>
+  while(__sync_lock_test_and_set(&lk->locked, 1) != 0)
+    80000360:	00070793          	mv	a5,a4
+    80000364:	0cf4a7af          	amoswap.w.aq	a5,a5,(s1)
+    80000368:	0007879b          	sext.w	a5,a5
+    8000036c:	fe079ae3          	bnez	a5,80000360 <acquire+0x38>
+  __sync_synchronize();
+    80000370:	0ff0000f          	fence
+  lk->cpu = mycpu();
+    80000374:	00000097          	auipc	ra,0x0
+    80000378:	0fc080e7          	jalr	252(ra) # 80000470 <mycpu>
+    8000037c:	00a4b823          	sd	a0,16(s1)
+}
+    80000380:	01813083          	ld	ra,24(sp)
+    80000384:	01013403          	ld	s0,16(sp)
+    80000388:	00813483          	ld	s1,8(sp)
+    8000038c:	02010113          	addi	sp,sp,32
+    80000390:	00008067          	ret
+
+0000000080000394 <pop_off>:
+
+void
+pop_off(void)
+{
+    80000394:	ff010113          	addi	sp,sp,-16
+    80000398:	00113423          	sd	ra,8(sp)
+    8000039c:	00813023          	sd	s0,0(sp)
+    800003a0:	01010413          	addi	s0,sp,16
+  struct cpu *c = mycpu();
+    800003a4:	00000097          	auipc	ra,0x0
+    800003a8:	0cc080e7          	jalr	204(ra) # 80000470 <mycpu>
+  asm volatile("csrr %0, sstatus" : "=r" (x) );
+    800003ac:	10002773          	csrr	a4,sstatus
+  return (x & SSTATUS_SIE) != 0;
+    800003b0:	00277713          	andi	a4,a4,2
+  if(intr_get())
+    800003b4:	00070463          	beqz	a4,800003bc <pop_off+0x28>
+    for(;;);
+    800003b8:	0000006f          	j	800003b8 <pop_off+0x24>
+  if(c->noff < 1)
+    800003bc:	00052703          	lw	a4,0(a0)
+    800003c0:	02e05c63          	blez	a4,800003f8 <pop_off+0x64>
+    for(;;);
+  c->noff -= 1;
+    800003c4:	fff7071b          	addiw	a4,a4,-1
+    800003c8:	0007069b          	sext.w	a3,a4
+    800003cc:	00e52023          	sw	a4,0(a0)
+  if(c->noff == 0 && c->intena)
+    800003d0:	00069c63          	bnez	a3,800003e8 <pop_off+0x54>
+    800003d4:	00452783          	lw	a5,4(a0)
+    800003d8:	00078863          	beqz	a5,800003e8 <pop_off+0x54>
+  asm volatile("csrr %0, sstatus" : "=r" (x) );
+    800003dc:	100027f3          	csrr	a5,sstatus
+  w_sstatus(r_sstatus() | SSTATUS_SIE);
+    800003e0:	0027e793          	ori	a5,a5,2
+  asm volatile("csrw sstatus, %0" : : "r" (x));
+    800003e4:	10079073          	csrw	sstatus,a5
+    intr_on();
+}
+    800003e8:	00813083          	ld	ra,8(sp)
+    800003ec:	00013403          	ld	s0,0(sp)
+    800003f0:	01010113          	addi	sp,sp,16
+    800003f4:	00008067          	ret
+    for(;;);
+    800003f8:	0000006f          	j	800003f8 <pop_off+0x64>
+
+00000000800003fc <release>:
+{
+    800003fc:	fe010113          	addi	sp,sp,-32
+    80000400:	00113c23          	sd	ra,24(sp)
+    80000404:	00813823          	sd	s0,16(sp)
+    80000408:	00913423          	sd	s1,8(sp)
+    8000040c:	02010413          	addi	s0,sp,32
+    80000410:	00050493          	mv	s1,a0
+  if(!holding(lk))
+    80000414:	00000097          	auipc	ra,0x0
+    80000418:	e54080e7          	jalr	-428(ra) # 80000268 <holding>
+    8000041c:	00051463          	bnez	a0,80000424 <release+0x28>
+    for(;;);
+    80000420:	0000006f          	j	80000420 <release+0x24>
+  lk->cpu = 0;
+    80000424:	0004b823          	sd	zero,16(s1)
+  __sync_synchronize();
+    80000428:	0ff0000f          	fence
+  __sync_lock_release(&lk->locked);
+    8000042c:	0f50000f          	fence	iorw,ow
+    80000430:	0804a02f          	amoswap.w	zero,zero,(s1)
+  pop_off();
+    80000434:	00000097          	auipc	ra,0x0
+    80000438:	f60080e7          	jalr	-160(ra) # 80000394 <pop_off>
+}
+    8000043c:	01813083          	ld	ra,24(sp)
+    80000440:	01013403          	ld	s0,16(sp)
+    80000444:	00813483          	ld	s1,8(sp)
+    80000448:	02010113          	addi	sp,sp,32
+    8000044c:	00008067          	ret
+
+0000000080000450 <cpuid>:
+// Must be called with interrupts disabled,
+// to prevent race with process being moved
+// to a different CPU.
+int
+cpuid()
+{
+    80000450:	ff010113          	addi	sp,sp,-16
+    80000454:	00813423          	sd	s0,8(sp)
+    80000458:	01010413          	addi	s0,sp,16
+  asm volatile("mv %0, tp" : "=r" (x) );
+    8000045c:	00020513          	mv	a0,tp
+  int id = r_tp();
+  return id;
+}
+    80000460:	0005051b          	sext.w	a0,a0
+    80000464:	00813403          	ld	s0,8(sp)
+    80000468:	01010113          	addi	sp,sp,16
+    8000046c:	00008067          	ret
+
+0000000080000470 <mycpu>:
+
+// Return this CPU's cpu struct.
+// Interrupts must be disabled.
+struct cpu*
+mycpu(void) {
+    80000470:	ff010113          	addi	sp,sp,-16
+    80000474:	00813423          	sd	s0,8(sp)
+    80000478:	01010413          	addi	s0,sp,16
+    8000047c:	00020793          	mv	a5,tp
+  int id = cpuid();
+  struct cpu *c = &cpus[id];
+    80000480:	0007879b          	sext.w	a5,a5
+    80000484:	00379793          	slli	a5,a5,0x3
+  return c;
+    80000488:	00008517          	auipc	a0,0x8
+    8000048c:	17850513          	addi	a0,a0,376 # 80008600 <cpus>
+    80000490:	00f50533          	add	a0,a0,a5
+    80000494:	00813403          	ld	s0,8(sp)
+    80000498:	01010113          	addi	sp,sp,16
+    8000049c:	00008067          	ret
