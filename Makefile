@@ -7,7 +7,10 @@ OBJS = \
   $K/main.o \
   $K/kernelvec.o \
   $K/spinlock.o \
-  $K/proc.o
+  $K/proc.o \
+  $K/printf.o \
+  $K/console.o \
+  $K/uart.o
 
 QEMU = qemu-system-riscv64
 
